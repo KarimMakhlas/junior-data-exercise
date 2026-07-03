@@ -51,8 +51,10 @@ From the project root:
 ```bash
 spark-submit src/patient_pipeline.py --input resources --output output/patients
 ```
+Alternatively, run:
 
-## Output
+```bash
+./run.sh
 
 The pipeline creates the following folders:
 
