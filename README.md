@@ -1,76 +1,158 @@
-# Exercice technique — Data Engineer Junior
+## Objective
 
-## Contexte
+The input data is split across several CSV files:
 
-Un établissement de santé souhaite exposer, via une **API FHIR R4**, un référentiel patient
-**propre et fiable**. Aujourd'hui, l'information patient est dispersée dans
-plusieurs extractions issues de systèmes différents (admissions, gestion des
-identités, recueil du consentement). Ces fichiers ne sont pas alignés, se
-recoupent partiellement et contiennent des imperfections typiques de données de
-production.
+```text
+resources/
+  patients.csv
+  identifiants_ipp.csv
+  adresses.csv
+  opposition_recherche.csv
+```
 
-Votre mission : à partir de ces extractions, **construire un pipeline qui
-alimente une table `Patient` au format [FHIR R4](https://hl7.org/fhir/R4/patient.html)**,
-directement exploitable par une API.
+The pipeline reads these files, cleans the data, reconciles patient identifiers, deduplicates patients, enriches them with addresses and research opposition information, and produces one FHIR-like `Patient` JSON resource per real patient.
 
-## Données sources
+## Project structure
 
-Les fichiers se trouvent dans [`resources/`](./resources). Ce sont des CSV
-(séparateur `,`, en-tête sur la première ligne, encodage UTF-8).
+```text
+junior-data-exercise/
+  resources/
+    patients.csv
+    identifiants_ipp.csv
+    adresses.csv
+    opposition_recherche.csv
 
-| Fichier                    | Contenu                                                                                                                                                                                                                                                                               |
-|----------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `patients.csv`             | Identité administrative : identifiant patient (**IPP**), nom de naissance, nom usuel, prénom(s) — un patient peut en avoir plusieurs —, date de naissance, sexe, date de décès éventuelle, et une date de fin de validité de l'enregistrement. |
-| `identifiants_ipp.csv`     | Cycle de vie des IPP : statut (actif / déprécié) et, le cas échéant, l'IPP vers lequel un IPP déprécié a été rattaché.                                                                                                                                                                |
-| `adresses.csv`             | Adresses des patients, actuelles et anciennes, avec période de validité.                                                                                                                                                                                                              |
-| `opposition_recherche.csv` | Indique si un patient s'est opposé à l'utilisation de ses données à des fins de recherche.                                                                                                                                                                                            |
+  src/
+    patient_pipeline.py
 
-(*️ Attention les données sont volontairement imparfaites) 
+  output/
+    sample/
+      patient_sample.jsonl
 
-## Objectif
+  README.md
+  NOTES.md
+  requirements.txt
+```
 
-Produire une table consolidée de **ressources `Patient` FHIR R4**, où :
+## Prerequisites
 
-- chaque patient « réel » apparaît **une seule fois** ;
-- l'information dispersée dans les différentes sources est **réconciliée** ;
-- le résultat est **directement consommable par une API** (sérialisable en FHIR
-  valide, requêtable, sans retraitement supplémentaire).
+If you use a Python virtual environment:
 
-Le format de sortie est **à votre
-appréciation** : justifiez votre choix au regard de l'usage « API ».
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-## Attentes techniques
+## How to run the pipeline
 
-- Le traitement doit être réalisé avec **Apache Spark**.
-- **Scala est préféré** (PySpark accepté si vous êtes nettement plus à l'aise —
-  précisez-le).
-- Le code doit être **structuré, lisible et rejouable** : on doit pouvoir
-  relancer le job sans corrompre le résultat.
+From the project root:
 
-## Ce que nous regardons
+```bash
+spark-submit src/patient_pipeline.py --input resources --output output/patients
+```
 
-L'énoncé est **volontairement ouvert**. Il n'y a pas une seule bonne réponse :
-nous nous intéressons surtout à **votre raisonnement et à vos arbitrages**.
+## Output
 
-## Livrables attendus
+The pipeline creates the following folders:
 
-1. Le **code source** du ou des job(s) Spark.
-2. Un moyen **simple de lancer** le pipeline (instructions de build/exécution,
-   `spark-submit`, ou équivalent).
-3. Un **court document** (un `NOTES.md` suffit) décrivant :
-    - vos hypothèses et arbitrages,
-    - les anomalies détectées et leur traitement,
-    - ce que vous feriez avec plus de temps.
-4. Un **échantillon de la table `Patient`** produite.
+```text
+output/patients/
+  patient_jsonl/
+  patient_parquet/
+  sample/
+```
 
-## Indications pratiques
+### JSON Lines output
 
-- Le volume est volontairement petit : l'enjeu est la **justesse et la
-  démarche**, pas la performance à grande échelle (mais nous apprécions que
-  vous sachiez quand celle-ci deviendrait un sujet).
-- Privilégiez un périmètre **terminé et cohérent** plutôt qu'un périmètre large
-  et inachevé.
-- Comptez environ **une demi-journée** de travail. Si vous manquez de temps,
-  documentez ce que vous auriez fait.
+```text
+output/patients/patient_jsonl/
+```
 
-Bon courage 🙂
+This folder contains one FHIR `Patient` JSON resource per line.
+
+To display the generated patients:
+
+```bash
+cat output/patients/patient_jsonl/part-*.txt
+```
+
+### Parquet output
+
+```text
+output/patients/patient_parquet/
+```
+
+This folder contains the same patient data as a Spark Parquet table.
+
+### Sample output
+
+```text
+output/sample/patient_sample.jsonl
+```
+
+This file contains a small sample of generated FHIR `Patient` resources for review.
+
+## Main processing steps
+
+The pipeline follows these steps:
+
+```text
+1. Read CSV files with Spark
+2. Build an IPP mapping table
+3. Resolve deprecated IPPs into a canonical IPP
+4. Clean patient administrative data
+5. Normalize dates, gender, names, and first names
+6. Deduplicate patients using canonical_ipp
+7. Clean and attach addresses
+8. Clean and attach research opposition
+9. Build a FHIR-like Patient resource
+10. Export JSON Lines and Parquet outputs
+```
+
+## Important concept: canonical_ipp
+
+Some IPPs can be deprecated and attached to a principal IPP.
+
+To avoid creating duplicate patients, I created a `canonical_ipp` column.
+
+Example:
+
+```text
+IPP 700000045 -> deprecated -> principal IPP 800000123
+```
+
+In the final output, the patient is identified by:
+
+```text
+800000123
+```
+
+This ensures that each real patient appears only once in the final result.
+
+## FHIR Patient output example
+
+Example of generated output:
+
+```json
+{
+  "resourceType": "Patient",
+  "id": "800000123",
+  "identifier": [
+    {
+      "system": "https://aphp.fr/identifiers/ipp",
+      "value": "800000123"
+    }
+  ],
+  "active": true,
+  "name": [
+    {
+      "use": "official",
+      "family": "MARTIN",
+      "given": ["Jean"]
+    }
+  ],
+  "gender": "male",
+  "birthDate": "1985-03-12"
+}
+```
