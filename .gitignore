@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+
+output/patients/patient_jsonl/
+output/patients/patient_parquet/
+output/patients/sample/
+
+.DS_Store
